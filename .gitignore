@@ -1,0 +1,20 @@
+# === 秘密情報（public repo なので絶対にコミットしない）===
+.aws/
+**/credentials
+*.pem
+*.ppk
+*.key
+.env
+.env.*
+*.tfvars
+# アカウントIDや鍵を含みがちなファイル
+secrets.*
+*-secret.*
+
+# CloudFormation/CDK の出力・状態
+cdk.out/
+*.swp
+
+# OS / editor
+.DS_Store
+Thumbs.db

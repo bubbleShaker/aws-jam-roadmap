@@ -1,0 +1,49 @@
+# gitleaks 設定（Phase 0 秘密情報ガード / Issue #4）
+# この repo は public。AWS アクセスキー・シークレット・秘密鍵に加え、
+# アカウントID・SSO start URL の誤コミットも pre-commit フックで止める。
+#
+# gitleaks 同梱のデフォルトルール（AWS アクセスキー等）を継承し、
+# デフォルトでは拾えない「12桁アカウントID」「awsapps.com の SSO start URL」を
+# custom rule で補う。プレースホルダや公式ドキュメントの例示値は allowlist で除外。
+
+# 同梱デフォルトルールを取り込む（AWS アクセスキー検出などを含む）。
+[extend]
+useDefault = true
+
+# --- custom rules（デフォルトに無い検出を補う）---
+
+[[rules]]
+id = "aws-account-id-in-arn"
+description = "AWS アカウントID（ARN 内の12桁）"
+# arn:partition:service:region:ACCOUNT:resource の account 位置の12桁を拾う
+regex = '''arn:aws[a-z\-]*:[^:\n]+:[^:\n]*:(\d{12}):'''
+secretGroup = 1
+keywords = ["arn:aws"]
+
+[[rules]]
+id = "aws-account-id-labeled"
+description = "AWS アカウントID（account id ラベル近接の12桁）"
+regex = '''(?i)account[_\- ]?id["' ]*[:=]["' ]*(\d{12})'''
+secretGroup = 1
+keywords = ["account"]
+
+[[rules]]
+id = "aws-sso-start-url"
+description = "AWS IAM Identity Center (SSO) start URL"
+regex = '''https://[a-z0-9][a-z0-9\-]{0,62}\.awsapps\.com/start'''
+keywords = ["awsapps.com"]
+
+[allowlist]
+description = "aws-jam-roadmap 固有の許可リスト（ドキュメント上の例示・プレースホルダ）"
+
+# md 内のプレースホルダ表記（<prod-profile> や <...> 等）と、AWS 公式ドキュメント／
+# このプロジェクトで例示に使うダミー値は秘密ではない。
+regexes = [
+  '''<[a-zA-Z0-9_\-\.]+>''',          # <prod-profile> / <stg-session> などの山括弧プレースホルダ
+  '''AKIAIOSFODNN7EXAMPLE''',          # AWS 公式ドキュメントの例示アクセスキーID
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',  # AWS 公式ドキュメントの例示シークレット
+  '''123456789012''',                  # AWS ドキュメント慣例のダミー account-id（doc の例示用）
+]
+# 注: 認証情報ファイル（.aws/ や *.bak）はあえてスキャン除外しない。
+#     .gitignore は通常 add を防ぐだけで、`git add -f` でバイパスされた時の
+#     最後の砦が gitleaks。最も危険なファイルこそスキャン対象に残す。

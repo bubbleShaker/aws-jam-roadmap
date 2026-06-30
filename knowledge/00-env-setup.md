@@ -12,36 +12,41 @@
 ### ルート／管理者 MFA
 - ✅ 設定完了済み（2026-07-01 時点）。
 
-### 本番系 SSO プロファイルの一時無効化（Issue #7）
+### 本番系 SSO プロファイルの完全削除（Issue #7 → #9）
 **目的**: Jam 学習中に、業務/本番系の SSO プロファイル（特定の接頭辞で始まる prod / stg の2系統）を誤って叩かないためのガード。
 
 > ℹ️ public repo のため、実プロファイル名は伏せて `<prod-profile>` / `<stg-profile>` / `<prod-session>` / `<stg-session>` と表記する。実値は各自の `~/.aws/config` を参照。
 
+#### なぜ「リネーム無効化」から「完全削除」に切り替えたか（Issue #9）
+当初（Issue #7）はセクション名に `disabled-` 接頭辞を付けて無効化した。しかし**これは不十分**だった:
+- 設定本体は残っているため、新しい名前で `aws --profile disabled-<prod-profile> ...` と打てば**依然として使えてしまう**。
+- 「古いコマンド履歴でうっかり叩く」事故は防げるが、「使えなくする」目的は果たせていなかった。
+
+→ そこで Issue #9 で **セクションごと完全削除**に切り替えた。
+
 **やったこと**（Windows `~/.aws/config` のみ。WSL 側には元々この本番系プロファイル無し）:
-1. config をタイムスタンプ付きでバックアップ
+1. config をタイムスタンプ付きでバックアップ（復元の保険。**public repo には絶対に入れない**ローカル限定ファイル）
    ```bash
    cp ~/.aws/config ~/.aws/config.bak.$(date +%Y%m%d-%H%M%S)
    ```
-2. セクション名に `disabled-` 接頭辞を付与（設定本体は残す＝リネームのみ）
-   - `[profile <prod-profile>]`  → `[profile disabled-<prod-profile>]`
-   - `[profile <stg-profile>]`   → `[profile disabled-<stg-profile>]`
-   - `[sso-session <prod-session>]` → `[sso-session disabled-<prod-session>]`
-   - `[sso-session <stg-session>]`  → `[sso-session disabled-<stg-session>]`
-   - ✅ 事前に config 全体を確認し、これら2 sso-session を参照する profile は上記2つのみで完結（参照切れの孤児 profile は無し）。
+2. 本番系の `profile` / `sso-session` セクション（`<prod-profile>` / `<stg-profile>` / `<prod-session>` / `<stg-session>`）を**丸ごと削除**（`localstack` / `default` は維持）。
+   - 残すのは `[profile localstack]` と `[default]` のみ。
 3. 確認
    ```bash
    aws configure list-profiles
-   # → disabled-<prod-profile> 等が並び、無効化前の名前が一覧から消えていること
+   # → localstack と default だけになり、本番系（disabled- 含む）が一切出ないこと
    aws --profile <prod-profile> sts get-caller-identity
-   # → "The config profile (<prod-profile>) could not be found" になれば成功
+   aws --profile disabled-<prod-profile> sts get-caller-identity
+   # → どちらも "The config profile (...) could not be found" になれば成功
    ```
 
 **復元方法**（本番系をまた使いたくなったら）:
-- 各セクション名から `disabled-` を外すだけ（profile 本体の `sso_session = ...` 参照はそのまま残っているので、接頭辞を外せば即整合する）。
-- もしくはバックアップ `~/.aws/config.bak.<timestamp>` で丸ごと戻す。
+- ローカルバックアップ `~/.aws/config.bak.<timestamp>` から該当セクションを戻す。
+- もしくは `aws configure sso` で再設定する（sso_start_url / account_id / role を再入力）。
 
 **ハマりどころ**:
 - WSL からの SSH 作業では WSL 側 `~/.aws/config` が使われる。今回この本番系は Windows 側だけだったので WSL は対応不要だったが、**環境ごとに `~/.aws` が独立している**点に注意。
+- 無効化は「リネーム」では不十分。**完全に使えなくしたいならセクションごと削除**する（リネームは新名で呼べてしまう）。
 
 ## 残タスク（Phase 0 / Issue #4）
 - [ ] 作業用 IAM 管理者ユーザー作成（以後ルート不使用）

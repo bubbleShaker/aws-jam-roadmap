@@ -47,14 +47,16 @@ gantt
 **ハンズオン**
 - AWS アカウント作成（既にあれば確認）。ルートユーザーに MFA。**作業用 IAM 管理者ユーザーにも MFA を付ける**。
 - 作業用 IAM ユーザー（管理者）を作り、以後ルートは使わない。長期アクセスキーは作らない／作っても短命運用（理想は IAM Identity Center の短期クレデンシャル）。
-- **Free Tier の残存確認**: Free Tier は「アカウント作成から12ヶ月」。既存アカウントが12ヶ月超なら EC2/RDS 等は最初から課金 → コスト前提が変わるので最初に確認する。
+- **CLI は名前付きプロファイル `jam` を新設**して使う（`aws configure --profile jam`、region=`ap-northeast-1`）。既存の `default`（別プロジェクト用）は触らず、学習コマンドは常に `--profile jam` を付けて誤爆を防ぐ。プロファイル命名と手順は成果物 `knowledge/00-env-setup.md` に記録する。
+- **このプロジェクトのアカウントは最初から従量課金**（既存 AWS 顧客が新規作成したため、新 Free Tier の Freeプラン・$200クレジット対象外）。Free Tier の緩衝も自動停止ガードも無い前提で運用する。詳細は `research/aws-free-tier-2025.md`。
 - **Budgets で月額アラート**（例: 1,000円 / 3,000円で通知）。Cost Explorer 有効化。
-  - ⚠️ **Budgets は「支出を止める」仕組みではない**。あくまで通知で、反映は最大1日遅れる。アラートに頼り切らず下記の即時削除運用とセットで使う。
+  - ⚠️ **Budgets は「支出を止める」仕組みではない**。あくまで通知で、反映は最大1日遅れる。自動停止ガードが無いぶん、下記の即時削除運用が唯一の実効的な歯止めになる。
 
 **🚨 コスト事故ガード（最重要・全フェーズ共通）**
+- このアカウントは従量課金・自動停止無し。**規律でしか止められない**ことを肝に銘じる。
 - **時間課金リソースは「そのセッション内で必ず削除し、請求/残高を目視確認」**。週末までためない。特に以下は放置すると月数千円予算を即超過する:
   - NAT Gateway（東京 約$0.06/h + データ処理料、放置で月$40超）
-  - RDS Multi-AZ / Aurora / ElastiCache / ALB（いずれも Free Tier 外の時間課金）
+  - RDS Multi-AZ / Aurora / ElastiCache / ALB（いずれも時間課金で放置厳禁。このアカウントは Free Tier が無いので最初の1時間から課金される）
   - GuardDuty / Security Hub / Config（有効化中ずっと課金）
 - リージョンは原則 `ap-northeast-1`（東京）で統一（消し忘れの飛び地を作らない）。
 
@@ -65,7 +67,7 @@ gantt
 - `iac/`・`summary/`・`knowledge/` のメモにも鍵やアカウントIDを書かない（プレースホルダにする）。
 
 **成果物**: `knowledge/00-env-setup.md`（手順とハマりどころ）
-**チェック**: [ ] ルート&管理者ともMFA済 [ ] IAMユーザー運用 [ ] Free Tier残存確認 [ ] Budgetsアラート [ ] .gitignore&gitleaks導入 [ ] CLI疎通(`aws sts get-caller-identity`)
+**チェック**: [ ] ルート&管理者ともMFA済 [ ] IAMユーザー運用 [ ] 従量課金前提を理解(`research/aws-free-tier-2025.md`) [ ] Budgetsアラート [ ] .gitignore&gitleaks導入 [ ] CLI疎通(`aws sts get-caller-identity --profile jam`)
 
 > 💡 バイブコーディング: 「使ってないリソースを列挙して消す」棚卸しスクリプトを AI に作らせる。ただし**毎週末ではなく毎セッション終了時**に走らせ、上記の即時削除を補完する保険として使う。
 

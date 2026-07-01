@@ -10,7 +10,8 @@
 
 ## 済んだこと
 ### ルート／管理者 MFA
-- ✅ 設定完了済み（2026-07-01 時点）。
+- ✅ ルートユーザー MFA 設定完了（2026-07-01 時点）。以後ルートは封印し、下記 SSO 管理者で作業する。
+- ✅ 作業用管理者（IAM Identity Center のユーザー）にも MFA 登録済み。
 
 ### 本番系 SSO プロファイルの完全削除（Issue #7 → #9）
 **目的**: Jam 学習中に、業務/本番系の SSO プロファイル（特定の接頭辞で始まる prod / stg の2系統）を誤って叩かないためのガード。
@@ -82,10 +83,77 @@
 - どうしても1回だけ通したい時のみ `git commit --no-verify`。常用は禁止（ガードが死ぬ）。
 - gitleaks 未導入の環境ではフックが**わざとコミットを止める**（黙って素通りさせない fail-closed 設計）。
 
-## 残タスク（Phase 0 / Issue #4）
-- [ ] 作業用 IAM 管理者ユーザー作成（以後ルート不使用）
-- [ ] CLI 名前付きプロファイル `jam` を新設（`aws configure --profile jam`, region=`ap-northeast-1`）
-- [ ] Budgets 月額アラート（1,000円 / 3,000円）＋ Cost Explorer 有効化
-- [x] gitleaks 導入（コミット前スキャン習慣）← 本セクションで完了
-- [ ] CLI 疎通（`aws sts get-caller-identity --profile jam`）
+### gitleaks を Windows（メイン開発機）でも動かす（Issue #4）
+**背景**: フックは fail-closed（gitleaks 不在ならコミット中断）なので、gitleaks が入っていない環境ではそもそもコミットできない。当初は WSL に linux バイナリを入れたが、**メイン開発機は Windows** のため Windows 側にも同バージョンを入れる必要があった（`command -v gitleaks` が Windows の git-bash で解決できないとフックが常に中断する）。
+
+**やったこと**（Windows / git-bash）:
+```bash
+mkdir -p ~/.local/bin
+curl -sSL -o /tmp/gl.zip \
+  https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip
+unzip -o /tmp/gl.zip gitleaks.exe -d ~/.local/bin
+~/.local/bin/gitleaks.exe version   # 8.30.1（WSL と同一版に揃える）
+```
+
+**ハマりどころ**:
+- フックの探索は `command -v gitleaks` → `$HOME/.local/bin/gitleaks` の順。Windows の実体は `gitleaks.exe` なので、**`~/.local/bin` を PATH に通して `command -v` で解決させる**のが確実（`-x "$HOME/.local/bin/gitleaks"` は拡張子違いでヒットしない）。
+- WSL 版（linux_x64）と Windows 版（windows_x64）は別バイナリ。**環境ごとに入れる**必要がある（`~/.aws` と同じく環境独立）。
+- バージョンは WSL と Windows で揃える（ルール解釈のズレを防ぐ）。
+
+### IAM Identity Center（SSO）＋ `jam` プロファイル（Issue #4）
+**方針**: 長期アクセスキーを作らず、**IAM Identity Center の短期クレデンシャル**で学習する（PLAN.md の理想形。public repo が隣にある本プロジェクトでは、ディスクに長期秘密鍵を置かないのが最も安全）。
+
+**コンソール設定の流れ**:
+1. **IAM Identity Center を東京リージョンで有効化**（AWS Organizations が自動作成され、このアカウントが管理アカウントになる。単一アカウント運用なので問題なし・無料）。リージョンは後から変えづらいので東京固定。
+2. **ユーザー作成**＋そのユーザーに **MFA 登録**（実ユーザー名/メールは伏せる = `<sso-user>`）。
+3. **グループ `jam-admins` 作成**し、ユーザーを所属させる。
+4. **Permission set = 事前定義済み `AdministratorAccess`**（セッション期間1時間 / リレーステート空欄）。
+   - グループに権限を割り当てるのが AWS 推奨の型（ユーザー個人に直接付けない）。Jam の IAM 課題もこの構造前提で出るので学習価値が高い。
+5. **AWS アカウントに「グループ `jam-admins` × `AdministratorAccess`」を割当**。
+
+**CLI 設定（`aws configure sso`）**:
+- `SSO session name` = `jam` / `SSO start URL` = `<sso-start-url>` / `SSO region` = `ap-northeast-1` / scopes はデフォルト。
+- ブラウザ認可後、account 選択 → role = `AdministratorAccess` → region = `ap-northeast-1` → output = `json`。
+- ⚠️ **CLI profile name は既定の長い名前を必ず `jam` に上書きする**（以後 `--profile jam` で本番誤爆を防ぐ運用のため）。
+
+**ハマりどころ**:
+- profile 名を後からリネームする場合、`~/.aws/config` の3箇所（`[profile <name>]` / `sso_session = <name>` / `[sso-session <name>]`）を揃えて直す。バックアップを取ってから `sed -i 's/<old>/jam/g' ~/.aws/config`。
+- **sso-session 名を変えると SSO トークンキャッシュが旧名に紐づいたまま**になり `Error loading SSO Token: Token for jam does not exist` が出る。→ `aws sso login --profile jam` で再ログインすれば解消。
+- セッションは1時間で切れる。切れたら `aws sso login --profile jam` で入れ直す（短期クレデンシャルの狙い通り）。
+
+**疎通確認**:
+```bash
+aws sts get-caller-identity --profile jam
+# → arn:aws:sts::<account-id>:assumed-role/AWSReservedSSO_AdministratorAccess_.../<sso-user>
+#   assumed-role 経由になっていれば SSO 短期クレデンシャルが機能している
+```
+
+### Budgets 月額アラート＋Cost Explorer（Issue #4）
+**Cost Explorer**: Billing コンソール → Cost Explorer → 有効化。**データ反映は最大24h**（「24時間後に確認」と出るのは正常＝有効化は成功している）。Budgets は Cost Explorer のデータ反映を待たずに独立して作れる。
+
+**Budgets（2本 / 最初の2本は無料枠）**:
+- このアカウントの**請求通貨は USD**。PLAN の「1,000円 / 3,000円」を為替 ≈150円/$ で換算し、安全側（低め）に設定:
+  - `jam-warn-1000` … amount **$7**（早期警告）
+  - `jam-danger-3000` … amount **$20**（危険ライン）
+- 各予算に通知3段階（**実績85% / 実績100% / 予測100%**）＋メール通知先を設定。
+  - **予測（Forecasted）通知**を入れる理由: Budgets の反映は最大1日遅れるので、実績が超える「前」に気付くため。自動停止ガードが無いこのアカウントでは早期検知が命綱。
+
+**CLI での検証**（作成後に確認できる）:
+```bash
+ACCT=$(aws sts get-caller-identity --profile jam --query Account --output text)
+aws budgets describe-budgets --account-id "$ACCT" --profile jam \
+  --query 'Budgets[].{Name:BudgetName,Limit:BudgetLimit,Type:BudgetType}'
+aws budgets describe-notifications-for-budget --account-id "$ACCT" \
+  --budget-name jam-danger-3000 --profile jam
+```
+> ⚠️ `describe-budgets` の出力には account-id・メールが含まれる。**repo には貼らない**（`<account-id>` プレースホルダにする）。
+
+## Phase 0 完了チェック（Issue #4）
+- [x] ルート & 管理者（SSO ユーザー）ともに MFA
+- [x] 作業用管理者を IAM Identity Center で運用（以後ルート封印）
+- [x] CLI 名前付きプロファイル `jam`（SSO / region=`ap-northeast-1`）
+- [x] Budgets 月額アラート（$7 / $20）＋ Cost Explorer 有効化
+- [x] gitleaks 導入（WSL + Windows 両方）＋ コミット前スキャン習慣
+- [x] CLI 疎通（`aws sts get-caller-identity --profile jam`）
+- [x] リージョンを `ap-northeast-1` に統一
 - [x] 従量課金前提の理解（`research/aws-free-tier-2025.md`）
